@@ -112,3 +112,107 @@ output_position = np.sin(2 * np.pi * output_timer / 4) + np.random.normal(0, 0.0
 alpha_pv, alpha_fft = estimate_alpha(input_timer, input_force, output_timer, output_position, prominence=0.2)
 print(f"Alpha from peak-valley: {alpha_pv}")
 print(f"Alpha from FFT: {alpha_fft}")
+
+
+import numpy as np
+from nfft import nfft
+import matplotlib.pyplot as plt
+
+def find_period_nufft(timer, signal, num_freqs=1000):
+    """
+    Find the dominant period of a non-uniformly sampled signal using NUFFT.
+    Returns None if the largest amplitude is not 10x the second largest.
+    
+    Parameters:
+    - timer: Array of non-uniform time points
+    - signal: Array of signal values
+    - num_freqs: Number of frequency points to evaluate
+    
+    Returns:
+    - Period (1/frequency) or None
+    """
+    # Remove mean to avoid zero-frequency issues
+    signal = signal - np.mean(signal)
+    
+    # Estimate average sampling interval for frequency range
+    dt_mean = np.mean(np.diff(timer))
+    max_freq = 0.5 / dt_mean  # Nyquist-like limit
+    freqs = np.linspace(1e-6, max_freq, num_freqs)
+    
+    # Normalize time to [-0.5, 0.5] for nfft (required by nfft library)
+    t_range = timer[-1] - timer[0]
+    t_normalized = (timer - timer[0]) / t_range - 0.5
+    
+    # Compute NUFFT (nfft library expects time in [-0.5, 0.5])
+    # Frequency indices correspond to freqs * t_range
+    fft_result = nfft(t_normalized, signal, N=num_freqs)
+    
+    # Compute amplitudes for positive frequencies
+    positive_freqs = freqs > 0
+    amplitudes = np.abs(fft_result[positive_freqs])
+    freqs_positive = freqs[positive_freqs]
+    
+    if np.any(positive_freqs):
+        # Find indices of top two amplitudes
+        sorted_indices = np.argsort(amplitudes)[::-1]
+        if len(sorted_indices) > 1:
+            max_amp = amplitudes[sorted_indices[0]]
+            second_max_amp = amplitudes[sorted_indices[1]]
+            # Check if max amplitude is at least 10 times larger
+            if max_amp >= 10 * second_max_amp:
+                fundamental_freq = freqs_positive[sorted_indices[0]]
+                if fundamental_freq > 0:
+                    return 1 / fundamental_freq
+        else:
+            fundamental_freq = freqs_positive[sorted_indices[0]]
+            if fundamental_freq > 0:
+                return 1 / fundamental_freq
+    
+    return None
+
+# Generate synthetic non-uniformly sampled data
+np.random.seed(42)
+N = 100
+t_max = 10.0
+true_period = 2.0  # True period of the signal
+true_freq = 1 / true_period
+
+# Non-uniform time points (randomly sampled with some jitter)
+timer = np.sort(np.random.uniform(0, t_max, N))
+signal = np.sin(2 * np.pi * true_freq * timer) + 0.1 * np.random.randn(N)
+
+# Find period using NUFFT
+estimated_period = find_period_nufft(timer, signal)
+print(f"True period: {true_period:.2f} s")
+print(f"Estimated period: {estimated_period:.2f} s" if estimated_period else "No clear period found")
+
+# Optional: Plot the signal and frequency spectrum
+# Compute NUFFT for visualization
+dt_mean = np.mean(np.diff(timer))
+max_freq = 0.5 / dt_mean
+freqs = np.linspace(1e-6, max_freq, 1000)
+t_normalized = (timer - timer[0]) / (timer[-1] - timer[0]) - 0.5
+fft_result = nfft(t_normalized, signal, N=1000)
+amplitudes = np.abs(fft_result)
+
+# Create a chart to visualize the signal and spectrum
+plt.figure(figsize=(12, 5))
+
+# Plot time-domain signal
+plt.subplot(1, 2, 1)
+plt.plot(timer, signal, 'o-', label='Non-uniform signal')
+plt.xlabel('Time (s)')
+plt.ylabel('Amplitude')
+plt.title('Non-Uniformly Sampled Signal')
+plt.legend()
+
+# Plot frequency spectrum
+plt.subplot(1, 2, 2)
+plt.plot(freqs[freqs > 0], amplitudes[freqs > 0], label='NUFFT Spectrum')
+plt.axvline(true_freq, color='r', linestyle='--', label='True Frequency')
+plt.xlabel('Frequency (Hz)')
+plt.ylabel('Amplitude')
+plt.title('NUFFT Frequency Spectrum')
+plt.legend()
+plt.tight_layout()
+plt.show()
